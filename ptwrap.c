@@ -11,8 +11,7 @@
 #define FAIL_WITH_PPID
 #include "fail.h"
 
-
-static char buf[2048];
+#define LOCAL_BUF_SIZE 1024
 
 int main(int argc, char *argv[]) {
     if(argc < 2) fail_err(EINVAL);
@@ -49,6 +48,7 @@ int main(int argc, char *argv[]) {
 
     int uppid = ensure(fork());
     if(uppid == 0) {
+        char buf[LOCAL_BUF_SIZE];
         while(1) {
             char *bufptr = buf;
             int size = ensure(read(0, bufptr, sizeof(buf)));
@@ -63,6 +63,7 @@ int main(int argc, char *argv[]) {
 
     int downpid = ensure(fork());
     if(downpid == 0) {
+        char buf[LOCAL_BUF_SIZE];
         while(1) {
             char *bufptr = buf;
             int size = ensure(read(ptmaster, bufptr, sizeof(buf)));

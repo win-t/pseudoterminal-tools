@@ -12,16 +12,13 @@
 
 #include "fail.h"
 
-static char buf[2048];
+#define LOCAL_BUF_SIZE 1024
 
 int main(int argc, char *argv[]) {
     if(argc < 3) fail_err(EINVAL);
 
-    int in = ensure(open(argv[1], O_WRONLY));
-    int out = ensure(open(argv[2], O_RDONLY));
-    int err = -1;
-    int ecode = -1;
-    if(argc == 4) err = ensure(open(argv[3], O_RDONLY));
+    int up = ensure(open(argv[1], O_WRONLY));
+    int down = ensure(open(argv[2], O_RDONLY));
 
     int ttyfd = -1;
     struct termios oldterm, newterm;
@@ -40,25 +37,27 @@ int main(int argc, char *argv[]) {
         ensure(tcsetattr(ttyfd, TCSANOW, &newterm));
     }
 
-    int inpid = ensure(fork());
-    if(inpid == 0) {
+    int uppid = ensure(fork());
+    if(uppid == 0) {
+        char buf[LOCAL_BUF_SIZE];
         while(1) {
             char *bufptr = buf;
             int size = ensure(read(0, bufptr, sizeof(buf)));
             if(size == 0) break;
             while(size > 0) {
-                int rc = ensure(write(in, bufptr, size));
+                int rc = ensure(write(up, bufptr, size));
                 bufptr += rc; size -= rc;
             }
         }
         _exit(0);
     }
 
-    int outpid = ensure(fork());
-    if(outpid == 0) {
+    int downpid = ensure(fork());
+    if(downpid == 0) {
+        char buf[LOCAL_BUF_SIZE];
         while(1) {
             char *bufptr = buf;
-            int size = ensure(read(out, bufptr, sizeof(buf)));
+            int size = ensure(read(down, bufptr, sizeof(buf)));
             if(size == 0) break;
             while(size > 0) {
                 int rc = ensure(write(1, bufptr, size));
@@ -68,50 +67,18 @@ int main(int argc, char *argv[]) {
         _exit(0);
     }
 
-    int errpid = -1;
-    if(err != -1) {
-        errpid = ensure(fork());
-        if(errpid == 0) {
-            while(1) {
-                char *bufptr = buf;
-                int size = ensure(read(err, bufptr, sizeof(buf)));
-                if(size == 0) break;
-                while(size > 0) {
-                    int rc = ensure(write(2, bufptr, size));
-                    bufptr += rc; size -= rc;
-                }
-            }
-            _exit(0);
-        }
-    }
-
     while(1) {
         int rc = wait(NULL);
         IF_err(rc) {
             if(errno == ECHILD) break;
             else fail_eno();
         }
-        kill(inpid, SIGKILL);
-        kill(outpid, SIGKILL);
-        if(errpid != -1) kill(errpid, SIGKILL);
+        if(rc == downpid) {
+            kill(uppid, SIGKILL);
+        }
     }
 
     if(ttyfd != -1) ensure(tcsetattr(ttyfd, TCSANOW, &oldterm));
 
-    int status = 0;
-    if(ecode != -1) {
-        char *bufptr = buf;
-        int size = 0;
-        while(1) {
-            int rc = ensure(read(ecode, bufptr, sizeof(buf) - 1 - size));
-            if(rc == 0) break;
-            bufptr += rc; size += rc;
-            if(memrchr(buf, '\n', size) != NULL) break;
-        }
-        buf[size] = 0;
-        int tmp;
-        if(sscanf(buf, "%d", &tmp) > 0) status = tmp;
-    }
-
-    return status;
+    return 0;
 }
