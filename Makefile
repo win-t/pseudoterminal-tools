@@ -1,4 +1,4 @@
-PROGS = ptwrap ptforward
+PROGS = ptwrap ptunwrap
 all: $(PROGS)
 
 %: %.c
