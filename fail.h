@@ -43,7 +43,7 @@ static void _p(int line, const char *tag, const char *format, ...) {
     struct timespec tm;
     clock_gettime(CLOCK_MONOTONIC, &tm);
     if(format == NULL) {
-        snprintf(msg, sizeof(msg), strerror(errno));
+        snprintf(msg, sizeof(msg), "%s", strerror(errno));
     } else {
         va_list arglist;
         va_start(arglist, format);

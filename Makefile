@@ -7,3 +7,4 @@ all: $(PROGS)
 clean:
 	rm -f $(PROGS)
 
+.PHONY: clean

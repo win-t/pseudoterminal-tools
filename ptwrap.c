@@ -7,47 +7,101 @@
 #include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
+#include <signal.h>
 
 #define FAIL_WITH_PPID
 #include "fail.h"
 
 #define LOCAL_BUF_SIZE 1024
 
+static volatile int last_signal = 0;
+static void forward_handler(int sig);
+static int start_upstream(int ptmaster);
+static int start_downstream(int ptmaster);
+
 int main(int argc, char *argv[]) {
     if(argc < 2) fail_err(EINVAL);
 
     int ptmaster;
-    int ptslave;
+    struct sigaction forward;
+
+    memset(&forward, 0, sizeof(forward));
+    forward.sa_handler = forward_handler;
+
+    ensure(sigaction(SIGTERM, &forward, NULL));
+    ensure(sigaction(SIGINT, &forward, NULL));
 
     ptmaster = ensure(posix_openpt(O_RDWR));
     ensure(grantpt(ptmaster));
     ensure(unlockpt(ptmaster));
-    ptslave = ensure(open(ptsname(ptmaster), O_RDWR));
 
     int cpid = ensure(fork());
     if(cpid == 0) {
-        ensure(close(ptmaster));
+        int ptslave;
 
         ensure(setsid());
-        ensure(ioctl(ptslave, TIOCSCTTY, 0));
 
-        ensure(close(0));
-        ensure(dup(ptslave));
+        ptslave = ensure(open(ensure_p(ptsname(ptmaster)), O_RDWR));
+        ensure(close(ptmaster));
 
-        ensure(close(1));
-        ensure(dup(ptslave));
-
-        ensure(close(2));
-        ensure(dup(ptslave));
-
+        ensure(dup2(ptslave, 0));
         ensure(close(ptslave));
+        ensure(dup2(0, 1));
+        ensure(dup2(0, 2));
 
         ensure(execvp(argv[1], &argv[1]));
         _exit(1);
     }
 
-    int uppid = ensure(fork());
-    if(uppid == 0) {
+    int uppid = start_upstream(ptmaster);
+    int downpid = start_downstream(ptmaster);
+
+    int status;
+    int closing = 0;
+    while(1) {
+        int tmp;
+        int rc;
+
+        if(last_signal != 0) rc = EINTR;
+        else rc = waitpid(-1, &tmp, 0);
+
+        IF_err(rc) {
+            if(errno == ECHILD) break;
+            else if(errno == EINTR && last_signal != 0) {
+                int sig_to_deliver = last_signal;
+                last_signal = 0;
+                kill(cpid, sig_to_deliver);
+            } else {
+                kill(uppid, SIGKILL);
+                waitpid(-1, NULL, WNOHANG);
+                kill(downpid, SIGKILL);
+                waitpid(-1, NULL, WNOHANG);
+                kill(cpid, SIGKILL);
+                waitpid(-1, NULL, WNOHANG);
+                fail_eno();
+            }
+        } else if(rc == cpid) {
+            closing = 1;
+            kill(uppid, SIGKILL);
+            kill(downpid, SIGKILL);
+            ensure(close(ptmaster));
+            status = WEXITSTATUS(tmp);
+        } else if (WEXITSTATUS(tmp) != 0 && !closing) {
+            if(rc == uppid ) uppid = start_upstream(ptmaster);
+            else if(rc == downpid) downpid = start_downstream(ptmaster);
+        }
+    }
+
+    return status;
+}
+
+static void forward_handler(int sig) {
+    if(last_signal == 0) last_signal = sig;
+}
+
+static int start_upstream(int ptmaster) {
+    int ret = ensure(fork());
+    if(ret == 0) {
         char buf[LOCAL_BUF_SIZE];
         while(1) {
             char *bufptr = buf;
@@ -60,9 +114,12 @@ int main(int argc, char *argv[]) {
         }
         _exit(0);
     }
+    return ret;
+}
 
-    int downpid = ensure(fork());
-    if(downpid == 0) {
+static int start_downstream(int ptmaster) {
+    int ret = ensure(fork());
+    if(ret == 0) {
         char buf[LOCAL_BUF_SIZE];
         while(1) {
             char *bufptr = buf;
@@ -75,21 +132,5 @@ int main(int argc, char *argv[]) {
         }
         _exit(0);
     }
-
-    int status;
-    while(1) {
-        int tmp;
-        int rc = waitpid(-1, &tmp, 0);
-        IF_err(rc) {
-            if(errno == ECHILD) break;
-            else fail_eno();
-        }
-        if(rc == cpid) {
-            status = WEXITSTATUS(tmp);
-            kill(uppid, SIGKILL);
-            kill(downpid, SIGKILL);
-        }
-    }
-
-    return status;
+    return ret;
 }
