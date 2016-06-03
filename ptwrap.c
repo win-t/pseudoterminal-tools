@@ -42,10 +42,10 @@ int main(int argc, char *argv[]) {
         int ptslave = ensure(open(ensure_p(ptsname(ptmaster)), O_RDWR));
         ensure(close(ptmaster));
 
-        ensure(dup2(ptslave, 0));
+        ensure(dup2(ptslave, STDIN_FILENO));
         ensure(close(ptslave));
-        ensure(dup2(0, 1));
-        ensure(dup2(0, 2));
+        ensure(dup2(STDIN_FILENO, STDOUT_FILENO));
+        ensure(dup2(STDIN_FILENO, STDERR_FILENO));
 
         ensure(execvp(argv[1], &argv[1]));
         exit(1);
@@ -101,7 +101,7 @@ static int start_upstream(int ptmaster) {
         char buf[LOCAL_BUF_SIZE];
         while(1) {
             char *bufptr = buf;
-            int size = ensure(read(0, bufptr, sizeof(buf)));
+            int size = ensure(read(STDIN_FILENO, bufptr, sizeof(buf)));
             if(size == 0) break;
             while(size > 0) {
                 int rc = ensure(write(ptmaster, bufptr, size));
@@ -129,7 +129,7 @@ static int start_downstream(int ptmaster) {
                 int size = rc;
                 if(size == 0) break;
                 while(size > 0) {
-                    int rc = ensure(write(1, bufptr, size));
+                    int rc = ensure(write(STDOUT_FILENO, bufptr, size));
                     bufptr += rc; size -= rc;
                 }
             }

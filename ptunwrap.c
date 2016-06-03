@@ -34,11 +34,11 @@ int main(int argc, char *argv[]) {
 
     struct termios oldterm, newterm;
 
-    if(isatty(0)) {
-        ensure(tcgetattr(0, &oldterm));
+    if(isatty(STDIN_FILENO)) {
+        ensure(tcgetattr(STDIN_FILENO, &oldterm));
         newterm = oldterm;
         cfmakeraw(&newterm);
-        ensure(tcsetattr(0, TCSADRAIN, &newterm));
+        ensure(tcsetattr(STDIN_FILENO, TCSADRAIN, &newterm));
     }
 
     int uppid = start_upstream(up, down);
@@ -71,7 +71,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    if(isatty(0)) ensure(tcsetattr(0, TCSADRAIN, &oldterm));
+    if(isatty(STDIN_FILENO)) ensure(tcsetattr(STDIN_FILENO, TCSADRAIN, &oldterm));
 
     return 0;
 }
@@ -87,7 +87,7 @@ static int start_upstream(int up, int down) {
         char buf[LOCAL_BUF_SIZE];
         while(1) {
             char *bufptr = buf;
-            int size = ensure(read(0, bufptr, sizeof(buf)));
+            int size = ensure(read(STDIN_FILENO, bufptr, sizeof(buf)));
             if(size == 0) break;
             while(size > 0) {
                 int rc = ensure(write(up, bufptr, size));
@@ -109,7 +109,7 @@ static int start_downstream(int up, int down) {
             int size = ensure(read(down, bufptr, sizeof(buf)));
             if(size == 0) break;
             while(size > 0) {
-                int rc = ensure(write(1, bufptr, size));
+                int rc = ensure(write(STDOUT_FILENO, bufptr, size));
                 bufptr += rc; size -= rc;
             }
         }

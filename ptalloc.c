@@ -32,8 +32,8 @@ int main(int argc, char *argv[]) {
     if(cpid == 0) {
         ensure(setsid());
         int null = ensure(open("/dev/null", O_RDWR));
-        ensure(dup2(null, 0));
-        ensure(dup2(null, 1));
+        ensure(dup2(null, STDIN_FILENO));
+        ensure(dup2(null, STDOUT_FILENO));
         if(null > 1) close(null);
 
         handle_stream(argv[1], argv[2], fptmaster);
