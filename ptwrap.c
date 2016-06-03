@@ -72,13 +72,14 @@ int main(int argc, char *argv[]) {
                 last_signal = 0;
                 kill(cpid, sig_to_deliver);
             } else {
+                int tmperrno = errno;
                 kill(uppid, SIGKILL);
                 waitpid(-1, NULL, WNOHANG);
                 kill(downpid, SIGKILL);
                 waitpid(-1, NULL, WNOHANG);
                 kill(cpid, SIGKILL);
                 waitpid(-1, NULL, WNOHANG);
-                fail_eno();
+                fail_err(tmperrno);
             }
         } else if(rc == cpid) {
             closing = 1;

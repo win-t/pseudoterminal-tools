@@ -53,11 +53,12 @@ int main(int argc, char *argv[]) {
                 kill(uppid, SIGKILL);
                 kill(downpid, SIGKILL);
             } else {
+                int tmperrno = errno;
                 kill(uppid, SIGKILL);
                 waitpid(-1, NULL, WNOHANG);
                 kill(downpid, SIGKILL);
                 waitpid(-1, NULL, WNOHANG);
-                fail_eno();
+                fail_err(tmperrno);
             }
         } else {
             if (WEXITSTATUS(tmp) != 0) {

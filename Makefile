@@ -1,4 +1,4 @@
-PROGS = ptwrap ptunwrap
+PROGS = ptwrap ptunwrap ptalloc
 all: $(PROGS)
 
 %: %.c
