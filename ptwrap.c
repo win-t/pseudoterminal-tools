@@ -129,8 +129,9 @@ static int start_downstream(int ptmaster) {
                 int size = rc;
                 if(size == 0) break;
                 while(size > 0) {
-                    int rc = ensure(write(fdown, bufptr, size));
+                    int rc = ensure(write(1, bufptr, size));
                     bufptr += rc; size -= rc;
+                }
             }
         }
         exit(0);
