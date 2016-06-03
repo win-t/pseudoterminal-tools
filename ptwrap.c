@@ -37,11 +37,9 @@ int main(int argc, char *argv[]) {
 
     int cpid = ensure(fork());
     if(cpid == 0) {
-        int ptslave;
-
         ensure(setsid());
 
-        ptslave = ensure(open(ensure_p(ptsname(ptmaster)), O_RDWR));
+        int ptslave = ensure(open(ensure_p(ptsname(ptmaster)), O_RDWR));
         ensure(close(ptmaster));
 
         ensure(dup2(ptslave, 0));
@@ -50,7 +48,7 @@ int main(int argc, char *argv[]) {
         ensure(dup2(0, 2));
 
         ensure(execvp(argv[1], &argv[1]));
-        _exit(1);
+        exit(1);
     }
 
     int uppid = start_upstream(ptmaster);
@@ -74,20 +72,17 @@ int main(int argc, char *argv[]) {
             } else {
                 int tmperrno = errno;
                 kill(uppid, SIGKILL);
-                waitpid(-1, NULL, WNOHANG);
                 kill(downpid, SIGKILL);
-                waitpid(-1, NULL, WNOHANG);
                 kill(cpid, SIGKILL);
-                waitpid(-1, NULL, WNOHANG);
                 fail_err(tmperrno);
             }
         } else if(rc == cpid) {
             closing = 1;
             kill(uppid, SIGKILL);
-            kill(downpid, SIGKILL);
             ensure(close(ptmaster));
             status = WEXITSTATUS(tmp);
-        } else if (WEXITSTATUS(tmp) != 0 && !closing) {
+        } else if (!closing && (!WIFEXITED(tmp) || WEXITSTATUS(tmp) != 0)) {
+            sleep(1);
             if(rc == uppid ) uppid = start_upstream(ptmaster);
             else if(rc == downpid) downpid = start_downstream(ptmaster);
         }
@@ -113,7 +108,7 @@ static int start_upstream(int ptmaster) {
                 bufptr += rc; size -= rc;
             }
         }
-        _exit(0);
+        exit(0);
     }
     return ret;
 }
@@ -124,14 +119,21 @@ static int start_downstream(int ptmaster) {
         char buf[LOCAL_BUF_SIZE];
         while(1) {
             char *bufptr = buf;
-            int size = ensure(read(ptmaster, bufptr, sizeof(buf)));
-            if(size == 0) break;
-            while(size > 0) {
-                int rc = ensure(write(1, bufptr, size));
-                bufptr += rc; size -= rc;
+            int rc = read(ptmaster, bufptr, sizeof(buf));
+            IF_err(rc) {
+                // master will return EIO if none open the slave
+                // https://github.com/torvalds/linux/blob/v4.2/drivers/tty/n_tty.c#L2268-L2274
+                if(errno == EIO) break;
+                else fail_eno();
+            } else {
+                int size = rc;
+                if(size == 0) break;
+                while(size > 0) {
+                    int rc = ensure(write(fdown, bufptr, size));
+                    bufptr += rc; size -= rc;
             }
         }
-        _exit(0);
+        exit(0);
     }
     return ret;
 }

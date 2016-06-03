@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #define R_err(what)       { errno = what; return -1; }
 #define R_err_p(what)     { errno = what; return NULL; }
@@ -64,7 +65,7 @@ static inline void _p_err(int line, int err) {
 
 static void _fail_eno(int line) {
     _p(line, "E", NULL);
-    _exit(1);
+    exit(1);
 }
 
 static inline void _fail_err(int line, int err) {

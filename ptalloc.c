@@ -15,45 +15,33 @@
 #include "fail.h"
 
 
-static void handle_stream(int fup, int fdown, int fptmaster);
+static void handle_stream(char *up, char *down, int fptmaster);
 
 int main(int argc, char *argv[]) {
-    close(0);
-
     if(argc < 3) fail_err(EINVAL);
 
-    int fptmaster;
-    struct stat tmpstat;
-    memset(&tmpstat, 0, sizeof(tmpstat));
-
-    fptmaster = ensure(posix_openpt(O_RDWR));
+    int fptmaster = ensure(posix_openpt(O_RDWR));
     ensure(grantpt(fptmaster));
     ensure(unlockpt(fptmaster));
 
     char *slavename = ensure_p(ptsname(fptmaster));
     printf("PTALLOC_TTY=%s\n", slavename);
+    fprintf(stderr, "Allocated tty is %s\n", slavename);
 
     int cpid = ensure(fork());
     if(cpid == 0) {
         ensure(setsid());
-        if(ensure(fork()) == 0) {
-            ensure(setsid());
-            int fup, fdown;
+        int null = ensure(open("/dev/null", O_RDWR));
+        ensure(dup2(null, 0));
+        ensure(dup2(null, 1));
+        if(null > 1) close(null);
 
-            fup = ensure(open(argv[1], O_RDONLY));
-            ensure(fstat(fup, &tmpstat));
-            if(!(tmpstat.st_mode & S_IFIFO)) fail_err(EINVAL);
-
-            fdown = ensure(open(argv[2], O_WRONLY));
-            ensure(fstat(fdown, &tmpstat));
-            if(!(tmpstat.st_mode & S_IFIFO)) fail_err(EINVAL);
-
-            handle_stream(fup, fdown, fptmaster);
-        }
-        exit(0);
+        handle_stream(argv[1], argv[2], fptmaster);
+        exit(1);
     }
 
     printf("PTALLOC_PID=%d\n", cpid);
+    fprintf(stderr, "The pid is %d\n", cpid);
 
     return 0;
 }
@@ -61,15 +49,15 @@ int main(int argc, char *argv[]) {
 
 #define LOCAL_BUF_SIZE 1024
 
-static int restart_upstream(int fup, int fdown, int fptmaster);
-static int restart_downstream(int fup, int fdown, int fptmaster);
+static int start_upstream(char *up, int fptmaster);
+static int start_downstream(char *down, int fptmaster);
 
 static volatile int closing = 0;
 static void close_handler(int sig) { closing = 1; }
 
-static void handle_stream(int fup, int fdown, int fptmaster) {
-    int uppid = restart_upstream(fup, fdown, fptmaster);
-    int downpid = restart_downstream(fup, fdown, fptmaster);
+static void handle_stream(char *up, char *down, int fptmaster) {
+    int uppid = start_upstream(up, fptmaster);
+    int downpid = start_downstream(down, fptmaster);
 
     struct sigaction close;
     memset(&close, 0, sizeof(close));
@@ -89,24 +77,23 @@ static void handle_stream(int fup, int fdown, int fptmaster) {
             } else {
                 int tmperrno = errno;
                 kill(uppid, SIGKILL);
-                waitpid(-1, NULL, WNOHANG);
                 kill(downpid, SIGKILL);
-                waitpid(-1, NULL, WNOHANG);
                 fail_err(tmperrno);
             }
-        } else if ((!WIFEXITED(tmp) || WEXITSTATUS(tmp) != 0) && !closing) {
-            if(rc == uppid ) uppid = restart_upstream(fup, fdown, fptmaster);
-            else if(rc == downpid) downpid = restart_downstream(fup, fdown, fptmaster);
+        } else if (!closing) {
+            sleep(1);
+            if(rc == uppid ) uppid = start_upstream(up, fptmaster);
+            else if(rc == downpid) downpid = start_downstream(down, fptmaster);
         }
     }
 
     exit(0);
 }
 
-static int restart_upstream(int fup, int fdown, int fptmaster) {
+static int start_upstream(char *up, int fptmaster) {
     int ret = ensure(fork());
     if(ret == 0) {
-        close(fdown);
+        int fup = ensure(open(up, O_RDONLY));
         char buf[LOCAL_BUF_SIZE];
         while(1) {
             char *bufptr = buf;
@@ -122,18 +109,26 @@ static int restart_upstream(int fup, int fdown, int fptmaster) {
     return ret;
 }
 
-static int restart_downstream(int fup, int fdown, int fptmaster) {
+static int start_downstream(char *down, int fptmaster) {
     int ret = ensure(fork());
     if(ret == 0) {
-        close(fup);
+        int fdown = ensure(open(down, O_WRONLY));
         char buf[LOCAL_BUF_SIZE];
         while(1) {
             char *bufptr = buf;
-            int size = ensure(read(fptmaster, bufptr, sizeof(buf)));
-            if(size == 0) break;
-            while(size > 0) {
-                int rc = ensure(write(fdown, bufptr, size));
-                bufptr += rc; size -= rc;
+            int rc = read(fptmaster, bufptr, sizeof(buf));
+            IF_err(rc) {
+                // master will return EIO if none open the slave
+                // https://github.com/torvalds/linux/blob/v4.2/drivers/tty/n_tty.c#L2268-L2274
+                if(errno == EIO) break;
+                else fail_eno();
+            } else {
+                int size = rc;
+                if(size == 0) break;
+                while(size > 0) {
+                    int rc = ensure(write(fdown, bufptr, size));
+                    bufptr += rc; size -= rc;
+                }
             }
         }
         exit(0);

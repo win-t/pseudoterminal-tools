@@ -1,7 +1,7 @@
 PROGS = ptwrap ptunwrap ptalloc
 all: $(PROGS)
 
-%: %.c
+%: %.c fail.h
 	$(CC) $(CFLAGS) -o $@ $<
 
 clean:

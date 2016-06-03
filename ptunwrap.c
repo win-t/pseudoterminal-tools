@@ -15,7 +15,7 @@
 #define LOCAL_BUF_SIZE 1024
 
 static volatile int closing = 0;
-static void cleanup_handler(int sig);
+static void close_handler(int sig);
 static int start_upstream(int up, int down);
 static int start_downstream(int up, int down);
 
@@ -25,21 +25,21 @@ int main(int argc, char *argv[]) {
     int up = ensure(open(argv[1], O_WRONLY));
     int down = ensure(open(argv[2], O_RDONLY));
 
+    struct sigaction close;
+    memset(&close, 0, sizeof(close));
+    close.sa_handler = close_handler;
+
+    ensure(sigaction(SIGTERM, &close, NULL));
+    ensure(sigaction(SIGINT, &close, NULL));
+
     struct termios oldterm, newterm;
-    struct sigaction cleanup;
 
-    memset(&cleanup, 0, sizeof(cleanup));
-    cleanup.sa_handler = cleanup_handler;
-
-    ensure(sigaction(SIGTERM, &cleanup, NULL));
-    ensure(sigaction(SIGINT, &cleanup, NULL));
-
-    if(!isatty(0)) fail_err(EINVAL);
-
-    ensure(tcgetattr(0, &oldterm));
-    newterm = oldterm;
-    cfmakeraw(&newterm);
-    ensure(tcsetattr(0, TCSADRAIN, &newterm));
+    if(isatty(0)) {
+        ensure(tcgetattr(0, &oldterm));
+        newterm = oldterm;
+        cfmakeraw(&newterm);
+        ensure(tcsetattr(0, TCSADRAIN, &newterm));
+    }
 
     int uppid = start_upstream(up, down);
     int downpid = start_downstream(up, down);
@@ -55,31 +55,28 @@ int main(int argc, char *argv[]) {
             } else {
                 int tmperrno = errno;
                 kill(uppid, SIGKILL);
-                waitpid(-1, NULL, WNOHANG);
                 kill(downpid, SIGKILL);
-                waitpid(-1, NULL, WNOHANG);
                 fail_err(tmperrno);
             }
         } else {
-            if (WEXITSTATUS(tmp) != 0) {
-                if (!closing) {
-                    if(rc == uppid) uppid = start_upstream(up, down);
-                    else if(rc == downpid) downpid = start_downstream(up, down);
-                }
-            } else {
+            if(WIFEXITED(tmp) && WEXITSTATUS(tmp) == 0) {
                 closing = 1;
-                if(rc == uppid) kill(downpid, SIGKILL);
-                else if(rc == downpid) kill(uppid, SIGKILL);
+                kill(uppid, SIGKILL);
+                kill(downpid, SIGKILL);
+            } else if(!closing) {
+                sleep(1);
+                if(rc == uppid) start_upstream(up, down);
+                else if(rc == downpid) start_downstream(up, down);
             }
         }
     }
 
-    ensure(tcsetattr(0, TCSADRAIN, &oldterm));
+    if(isatty(0)) ensure(tcsetattr(0, TCSADRAIN, &oldterm));
 
     return 0;
 }
 
-static void cleanup_handler(int sig) {
+static void close_handler(int sig) {
     closing = 1;
 }
 
@@ -97,7 +94,7 @@ static int start_upstream(int up, int down) {
                 bufptr += rc; size -= rc;
             }
         }
-        _exit(0);
+        exit(0);
     }
     return ret;
 }
@@ -116,7 +113,7 @@ static int start_downstream(int up, int down) {
                 bufptr += rc; size -= rc;
             }
         }
-        _exit(0);
+        exit(0);
     }
     return ret;
 }
