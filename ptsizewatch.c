@@ -24,6 +24,7 @@ int main(int argc, char *argv[]) {
     tmp.sa_handler = close_handler;
     ensure(sigaction(SIGINT, &tmp, NULL));
     ensure(sigaction(SIGTERM, &tmp, NULL));
+    ensure(sigaction(SIGPIPE, &tmp, NULL));
 
     while(1) {
         if(sizechanged) {
