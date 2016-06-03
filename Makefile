@@ -1,4 +1,4 @@
-PROGS = ptwrap ptunwrap ptalloc
+PROGS = ptwrap ptunwrap ptalloc ptsizewatch
 all: $(PROGS)
 
 %: %.c fail.h
