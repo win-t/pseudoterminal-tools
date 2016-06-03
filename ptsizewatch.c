@@ -30,6 +30,7 @@ int main(int argc, char *argv[]) {
             struct winsize sz;
             ensure(ioctl(0, TIOCGWINSZ, &sz));
             printf("row=%d,col=%d\n", sz.ws_row, sz.ws_col);
+            fflush(stdout);
             sizechanged = 0;
         }
         pause();
