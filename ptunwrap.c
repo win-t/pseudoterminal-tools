@@ -14,6 +14,13 @@
 
 #define LOCAL_BUF_SIZE 1024
 
+static int siglist[] = {
+    SIGHUP,
+    SIGINT,
+    SIGQUIT,
+    SIGTERM,
+};
+
 static volatile int closing = 0;
 static void close_handler(int sig);
 static int start_upstream(int up, int down);
@@ -29,9 +36,6 @@ int main(int argc, char *argv[]) {
     memset(&close, 0, sizeof(close));
     close.sa_handler = close_handler;
 
-    ensure(sigaction(SIGTERM, &close, NULL));
-    ensure(sigaction(SIGINT, &close, NULL));
-
     struct termios oldterm, newterm;
 
     if(isatty(STDIN_FILENO)) {
@@ -44,30 +48,21 @@ int main(int argc, char *argv[]) {
     int uppid = start_upstream(up, down);
     int downpid = start_downstream(up, down);
 
+    for (int i = 0; i < sizeof(siglist) / sizeof(siglist[0]); ++i) {
+        ensure(sigaction(siglist[i], &close, NULL));
+    }
+
     while(1) {
-        int tmp;
-        int rc = waitpid(-1, &tmp, 0);
+        int rc = waitpid(-1, NULL, 0);
         IF_err(rc) {
             if(errno == ECHILD) break;
             else if (errno == EINTR && closing) {
                 kill(uppid, SIGKILL);
                 kill(downpid, SIGKILL);
-            } else {
-                int tmperrno = errno;
-                kill(uppid, SIGKILL);
-                kill(downpid, SIGKILL);
-                fail_err(tmperrno);
             }
-        } else {
-            if(WIFEXITED(tmp) && WEXITSTATUS(tmp) == 0) {
-                closing = 1;
-                kill(uppid, SIGKILL);
-                kill(downpid, SIGKILL);
-            } else if(!closing) {
-                sleep(1);
-                if(rc == uppid) start_upstream(up, down);
-                else if(rc == downpid) start_downstream(up, down);
-            }
+        } else if(rc == uppid || rc == downpid) {
+            kill(uppid, SIGKILL);
+            kill(downpid, SIGKILL);
         }
     }
 

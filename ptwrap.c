@@ -14,6 +14,15 @@
 
 #define LOCAL_BUF_SIZE 1024
 
+static int siglist[] = {
+    SIGHUP,
+    SIGINT,
+    SIGQUIT,
+    SIGTERM,
+    SIGUSR1,
+    SIGUSR2,
+};
+
 static volatile int last_signal = 0;
 static void forward_handler(int sig);
 static int start_upstream(int ptmaster);
@@ -28,9 +37,6 @@ int main(int argc, char *argv[]) {
     memset(&forward, 0, sizeof(forward));
     forward.sa_handler = forward_handler;
 
-    ensure(sigaction(SIGTERM, &forward, NULL));
-    ensure(sigaction(SIGINT, &forward, NULL));
-
     ptmaster = ensure(posix_openpt(O_RDWR));
     ensure(grantpt(ptmaster));
     ensure(unlockpt(ptmaster));
@@ -41,6 +47,8 @@ int main(int argc, char *argv[]) {
 
         int ptslave = ensure(open(ensure_p(ptsname(ptmaster)), O_RDWR));
         ensure(close(ptmaster));
+
+        ensure(ioctl(ptslave, TIOCSCTTY, 1));
 
         ensure(dup2(ptslave, STDIN_FILENO));
         ensure(close(ptslave));
@@ -53,42 +61,37 @@ int main(int argc, char *argv[]) {
 
     int uppid = start_upstream(ptmaster);
     int downpid = start_downstream(ptmaster);
+    ensure(close(ptmaster));
+
+    for (int i = 0; i < sizeof(siglist) / sizeof(siglist[0]); ++i) {
+        ensure(sigaction(siglist[i], &forward, NULL));
+    }
 
     int status;
-    int closing = 0;
+    int exit_code;
     while(1) {
-        int tmp;
-        int rc;
+        if(last_signal != 0) {
+            int sig_to_deliver = last_signal;
+            last_signal = 0;
+            kill(cpid, sig_to_deliver);
+        }
 
-        if(last_signal != 0) rc = EINTR;
-        else rc = waitpid(-1, &tmp, 0);
-
+        int rc = waitpid(-1, &status, 0);
         IF_err(rc) {
             if(errno == ECHILD) break;
-            else if(errno == EINTR && last_signal != 0) {
-                int sig_to_deliver = last_signal;
-                last_signal = 0;
-                kill(cpid, sig_to_deliver);
-            } else {
-                int tmperrno = errno;
-                kill(uppid, SIGKILL);
-                kill(downpid, SIGKILL);
-                kill(cpid, SIGKILL);
-                fail_err(tmperrno);
-            }
         } else if(rc == cpid) {
-            closing = 1;
+            cpid = 0;
             kill(uppid, SIGKILL);
-            ensure(close(ptmaster));
-            status = WEXITSTATUS(tmp);
-        } else if (!closing && (!WIFEXITED(tmp) || WEXITSTATUS(tmp) != 0)) {
-            sleep(1);
-            if(rc == uppid ) uppid = start_upstream(ptmaster);
-            else if(rc == downpid) downpid = start_downstream(ptmaster);
+            kill(downpid, SIGKILL);
+            exit_code = WEXITSTATUS(status);
+        } else if(rc == uppid || rc == downpid) {
+            kill(uppid, SIGKILL);
+            kill(downpid, SIGKILL);
+            if (cpid != 0) kill(cpid, SIGHUP);
         }
     }
 
-    return status;
+    return exit_code;
 }
 
 static void forward_handler(int sig) {
@@ -119,19 +122,11 @@ static int start_downstream(int ptmaster) {
         char buf[LOCAL_BUF_SIZE];
         while(1) {
             char *bufptr = buf;
-            int rc = read(ptmaster, bufptr, sizeof(buf));
-            IF_err(rc) {
-                // master will return EIO if none open the slave
-                // https://github.com/torvalds/linux/blob/v4.2/drivers/tty/n_tty.c#L2268-L2274
-                if(errno == EIO) break;
-                else fail_eno();
-            } else {
-                int size = rc;
-                if(size == 0) break;
-                while(size > 0) {
-                    int rc = ensure(write(STDOUT_FILENO, bufptr, size));
-                    bufptr += rc; size -= rc;
-                }
+            int size = read(ptmaster, bufptr, sizeof(buf));
+            if(size == 0) break;
+            while(size > 0) {
+                int rc = ensure(write(STDOUT_FILENO, bufptr, size));
+                bufptr += rc; size -= rc;
             }
         }
         exit(0);
