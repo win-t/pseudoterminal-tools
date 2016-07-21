@@ -23,7 +23,7 @@ static int siglist[] = {
     SIGUSR2,
 };
 
-static volatile int last_signal = 0;
+static volatile int cpid = 0;
 static void forward_handler(int sig);
 static int start_upstream(int ptmaster);
 static int start_downstream(int ptmaster);
@@ -62,6 +62,8 @@ int main(int argc, char *argv[]) {
     int uppid = start_upstream(ptmaster);
     int downpid = start_downstream(ptmaster);
     ensure(close(ptmaster));
+    ensure(close(STDIN_FILENO));
+    ensure(close(STDOUT_FILENO));
 
     for (int i = 0; i < sizeof(siglist) / sizeof(siglist[0]); ++i) {
         ensure(sigaction(siglist[i], &forward, NULL));
@@ -70,12 +72,6 @@ int main(int argc, char *argv[]) {
     int status;
     int exit_code;
     while(1) {
-        if(last_signal != 0) {
-            int sig_to_deliver = last_signal;
-            last_signal = 0;
-            kill(cpid, sig_to_deliver);
-        }
-
         int rc = waitpid(-1, &status, 0);
         IF_err(rc) {
             if(errno == ECHILD) break;
@@ -87,7 +83,6 @@ int main(int argc, char *argv[]) {
         } else if(rc == uppid || rc == downpid) {
             kill(uppid, SIGKILL);
             kill(downpid, SIGKILL);
-            if (cpid != 0) kill(cpid, SIGHUP);
         }
     }
 
@@ -95,12 +90,13 @@ int main(int argc, char *argv[]) {
 }
 
 static void forward_handler(int sig) {
-    if(last_signal == 0) last_signal = sig;
+    if(cpid != 0) kill(cpid, sig);
 }
 
 static int start_upstream(int ptmaster) {
     int ret = ensure(fork());
     if(ret == 0) {
+        ensure(close(STDOUT_FILENO));
         char buf[LOCAL_BUF_SIZE];
         while(1) {
             char *bufptr = buf;
@@ -119,6 +115,7 @@ static int start_upstream(int ptmaster) {
 static int start_downstream(int ptmaster) {
     int ret = ensure(fork());
     if(ret == 0) {
+        ensure(close(STDIN_FILENO));
         char buf[LOCAL_BUF_SIZE];
         while(1) {
             char *bufptr = buf;
