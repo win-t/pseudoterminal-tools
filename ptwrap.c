@@ -24,6 +24,7 @@ static int siglist[] = {
 };
 
 static volatile int cpid = 0;
+
 static void forward_handler(int sig);
 static int start_upstream(int ptmaster);
 static int start_downstream(int ptmaster);
@@ -32,10 +33,6 @@ int main(int argc, char *argv[]) {
     if(argc < 2) fail_err(EINVAL);
 
     int ptmaster;
-    struct sigaction forward;
-
-    memset(&forward, 0, sizeof(forward));
-    forward.sa_handler = forward_handler;
 
     ptmaster = ensure(posix_openpt(O_RDWR));
     ensure(grantpt(ptmaster));
@@ -48,23 +45,28 @@ int main(int argc, char *argv[]) {
         int ptslave = ensure(open(ensure_p(ptsname(ptmaster)), O_RDWR));
         ensure(close(ptmaster));
 
-        ensure(ioctl(ptslave, TIOCSCTTY, 1));
+        ensure(ioctl(ptslave, TIOCSCTTY, 0));
 
         ensure(dup2(ptslave, STDIN_FILENO));
         ensure(close(ptslave));
         ensure(dup2(STDIN_FILENO, STDOUT_FILENO));
         ensure(dup2(STDIN_FILENO, STDERR_FILENO));
 
-        ensure(execvp(argv[1], &argv[1]));
+        char *new_arg[argc];
+        for(int i = 1; i < argc; ++i) new_arg[i - 1] = argv[i];
+        new_arg[argc - 1] = 0;
+
+        ensure(execvp(new_arg[0], new_arg));
         exit(1);
     }
 
     int uppid = start_upstream(ptmaster);
     int downpid = start_downstream(ptmaster);
     ensure(close(ptmaster));
-    ensure(close(STDIN_FILENO));
-    ensure(close(STDOUT_FILENO));
 
+    struct sigaction forward;
+    memset(&forward, 0, sizeof(forward));
+    forward.sa_handler = forward_handler;
     for (int i = 0; i < sizeof(siglist) / sizeof(siglist[0]); ++i) {
         ensure(sigaction(siglist[i], &forward, NULL));
     }
@@ -77,12 +79,15 @@ int main(int argc, char *argv[]) {
             if(errno == ECHILD) break;
         } else if(rc == cpid) {
             cpid = 0;
-            kill(uppid, SIGKILL);
-            kill(downpid, SIGKILL);
+            if(uppid != 0) kill(uppid, SIGKILL);
+            if(downpid != 0) kill(downpid, SIGKILL);
             exit_code = WEXITSTATUS(status);
-        } else if(rc == uppid || rc == downpid) {
-            kill(uppid, SIGKILL);
-            kill(downpid, SIGKILL);
+        } else if(rc == uppid) {
+            uppid = 0;
+            if(downpid != 0) kill(downpid, SIGKILL);
+        } else if(rc == downpid) {
+            downpid = 0;
+            if(uppid != 0) kill(uppid, SIGKILL);
         }
     }
 
@@ -96,7 +101,6 @@ static void forward_handler(int sig) {
 static int start_upstream(int ptmaster) {
     int ret = ensure(fork());
     if(ret == 0) {
-        ensure(close(STDOUT_FILENO));
         char buf[LOCAL_BUF_SIZE];
         while(1) {
             char *bufptr = buf;
@@ -115,7 +119,6 @@ static int start_upstream(int ptmaster) {
 static int start_downstream(int ptmaster) {
     int ret = ensure(fork());
     if(ret == 0) {
-        ensure(close(STDIN_FILENO));
         char buf[LOCAL_BUF_SIZE];
         while(1) {
             char *bufptr = buf;
